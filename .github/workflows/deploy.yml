@@ -1,4 +1,4 @@
-name: Validate, Build, and Deploy
+name: Validate for Hostinger Deployment
 
 on:
   pull_request:
@@ -8,16 +8,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-deployment
-  cancel-in-progress: false
+  group: hostinger-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   validate:
@@ -43,144 +38,10 @@ jobs:
       - name: Build application
         run: npm run build
 
-  publish:
-    name: Publish container image
-    if: github.event_name != 'pull_request'
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    outputs:
-      image: ${{ steps.image.outputs.image }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and publish image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Record immutable image name
-        id: image
+      - name: Verify production entry point
         shell: bash
-        run: echo "image=${REGISTRY}/${IMAGE_NAME,,}:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: test -f dist/server.cjs && test -f dist/index.html
 
-  deploy:
-    name: Deploy to production
-    if: github.event_name != 'pull_request'
-    needs: publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: production
-      url: ${{ vars.APP_URL }}
-    steps:
-      - name: Configure SSH
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        shell: bash
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Log the server in to GHCR
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        shell: bash
-        run: |
-          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
-
-      - name: Deploy immutable image
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          APP_PORT: ${{ vars.APP_PORT }}
-          IMAGE: ${{ needs.publish.outputs.image }}
-        shell: bash
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$IMAGE" "${APP_PORT:-3001}" <<'REMOTE'
-          set -euo pipefail
-          image="$1"
-          app_port="$2"
-          previous_image="$(docker inspect --format='{{.Config.Image}}' fieldtrack-pro 2>/dev/null || true)"
-
-          docker pull "$image"
-          docker rm -f fieldtrack-pro-next 2>/dev/null || true
-          docker rm -f fieldtrack-pro 2>/dev/null || true
-          docker run -d \
-            --name fieldtrack-pro-next \
-            --restart unless-stopped \
-            -p "127.0.0.1:${app_port}:3000" \
-            -e NODE_ENV=production \
-            -e PORT=3000 \
-            -v fieldtrack-pro-data:/app/data \
-            "$image"
-
-          for attempt in $(seq 1 12); do
-            health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' fieldtrack-pro-next)"
-            if [ "$health" = healthy ]; then
-              break
-            fi
-            if [ "$health" = unhealthy ] || [ "$attempt" -eq 12 ]; then
-              docker logs fieldtrack-pro-next
-              docker rm -f fieldtrack-pro-next
-              if [ -n "$previous_image" ]; then
-                docker run -d \
-                  --name fieldtrack-pro \
-                  --restart unless-stopped \
-                  -p "127.0.0.1:${app_port}:3000" \
-                  -e NODE_ENV=production \
-                  -e PORT=3000 \
-                  -v fieldtrack-pro-data:/app/data \
-                  "$previous_image"
-              fi
-              exit 1
-            fi
-            sleep 5
-          done
-
-          docker rename fieldtrack-pro-next fieldtrack-pro
-          docker image prune -f
-          printf 'Deployed %s (previous image: %s)\n' "$image" "${previous_image:-none}"
-          REMOTE
-
-      - name: Verify public health endpoint
-        if: vars.APP_URL != ''
-        env:
-          APP_URL: ${{ vars.APP_URL }}
-        shell: bash
-        run: curl --fail --silent --show-error --retry 6 --retry-delay 5 "$APP_URL/api/health"
+  # Hostinger performs the actual deployment through its native GitHub
+  # integration after a validated change is merged into main. Protect the
+  # main branch and require this workflow to pass before merging.

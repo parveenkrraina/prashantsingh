@@ -4,7 +4,7 @@ FieldTrack Pro is a React and Express application for field staff attendance, GP
 
 For production preparation and rollout, see [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).
 
-The automated GitHub deployment workflow is documented under [GitHub Actions deployment](#github-actions-deployment).
+The Hostinger deployment process is documented under [Hostinger deployment](#hostinger-deployment).
 
 ## Requirements
 
@@ -123,44 +123,66 @@ Remove-Item Env:PORT -ErrorAction SilentlyContinue
 Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
 ```
 
-## GitHub Actions deployment
+## Hostinger deployment
 
-The workflow in `.github/workflows/deploy.yml` validates the application, publishes a Docker image to GitHub Container Registry, and deploys it to a Linux server over SSH after a push to `main`. Pull requests only run validation and the production build.
+Docker is not required when using Hostinger's managed Node.js Web App hosting. Hostinger connects directly to GitHub, installs dependencies, builds the application, and deploys new commits.
 
-### Server requirements
+### Supported plan
 
-- A Linux server with Docker installed
-- A deployment user with permission to run Docker
-- SSH access from GitHub-hosted runners
-- A reverse proxy sending the production domain to `127.0.0.1:3001`
-- HTTPS configured at the reverse proxy
+Use a Hostinger Business Web Hosting or Cloud Hosting plan with Node.js Web App support. A Hostinger VPS follows a different, self-managed deployment process.
 
-The workflow runs only one container because the current JSON database does not support concurrent application writers. Its persistent Docker volume is named `fieldtrack-pro-data`.
+### GitHub validation
 
-### Repository secrets
+The workflow in `.github/workflows/deploy.yml` runs on pull requests and pushes to `main`. It performs:
 
-Configure these under **GitHub repository → Settings → Secrets and variables → Actions → Secrets**:
+1. `npm ci`
+2. `npm run lint`
+3. `npm run build`
+4. Verification of `dist/server.cjs` and `dist/index.html`
 
-| Secret | Description |
+Protect the GitHub `main` branch and require this workflow to pass before a pull request can be merged. Once the validated change reaches `main`, Hostinger's GitHub integration performs the deployment.
+
+### Connect the repository in Hostinger
+
+1. Open **hPanel → Websites → Add Website**.
+2. Select **Node.js Web App** or **Deploy Web App**.
+3. Select **Import Git Repository**.
+4. Authorize GitHub and select this repository.
+5. Select the `main` branch.
+6. Confirm the build configuration.
+
+Use these build settings when Hostinger does not detect them automatically:
+
+| Setting | Value |
 | --- | --- |
-| `DEPLOY_HOST` | Server hostname or IP address |
-| `DEPLOY_PORT` | SSH port; normally `22` |
-| `DEPLOY_USER` | SSH deployment username |
-| `DEPLOY_SSH_KEY` | Private SSH key for the deployment user |
-| `DEPLOY_KNOWN_HOSTS` | Trusted server host-key entry generated with `ssh-keyscan -H your-server` and verified by the server administrator |
-| `GHCR_USERNAME` | GitHub username that can read the container package |
-| `GHCR_TOKEN` | GitHub token with `read:packages` permission |
+| Node.js version | `22` |
+| Install command | `npm ci` |
+| Build command | `npm run build` |
+| Start command | `npm start` |
+| Entry file, if requested | `app.js` |
+| Output directory, if requested | `dist` |
 
-### Repository variables
+Add these environment variables in hPanel rather than committing them:
 
-Configure these under **Actions → Variables**:
+```env
+NODE_ENV=production
+APP_URL=https://your-domain.example
+```
 
-| Variable | Description | Example |
-| --- | --- | --- |
-| `APP_URL` | Public HTTPS URL used for the final health check | `https://fieldtrack.example.com` |
-| `APP_PORT` | Private host port used by the reverse proxy | `3001` |
+Hostinger supplies the application port. The server already reads `process.env.PORT`, so do not hard-code the public port.
 
-Create a GitHub environment named `production`. Add required reviewers to that environment if deployments need manual approval.
+### Production data warning
 
-The workflow can also be started manually from **GitHub → Actions → Validate, Build, and Deploy → Run workflow**.
-..
+The application currently stores all server data in `data/database.json`. Hostinger creates versioned deployment directories and switches the live release after a successful deployment. Files inside a release must not be treated as durable application storage.
+
+Before using the application with real production data, migrate the JSON database to Hostinger MySQL, Supabase PostgreSQL, or another managed database. Otherwise a redeployment can lose or replace user, attendance, GPS, payroll, and configuration data.
+
+### Deployment verification
+
+After Hostinger reports a successful deployment, verify:
+
+```text
+https://your-domain.example/api/health
+```
+
+Then test administrator login, staff login, GPS permission, camera permission, offline synchronization, and the manager dashboard over HTTPS.
