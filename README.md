@@ -2,6 +2,10 @@
 
 FieldTrack Pro is a React and Express application for field staff attendance, GPS tracking, visit verification, route playback, leave management, duty rosters, and payroll reporting.
 
+For production preparation and rollout, see [DEPLOYMENT_PLAN.md](DEPLOYMENT_PLAN.md).
+
+The automated GitHub deployment workflow is documented under [GitHub Actions deployment](#github-actions-deployment).
+
 ## Requirements
 
 - Node.js 20 or later
@@ -118,3 +122,43 @@ Variables set with `$env:` apply to the current PowerShell session. Remove them 
 Remove-Item Env:PORT -ErrorAction SilentlyContinue
 Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
 ```
+
+## GitHub Actions deployment
+
+The workflow in `.github/workflows/deploy.yml` validates the application, publishes a Docker image to GitHub Container Registry, and deploys it to a Linux server over SSH after a push to `main`. Pull requests only run validation and the production build.
+
+### Server requirements
+
+- A Linux server with Docker installed
+- A deployment user with permission to run Docker
+- SSH access from GitHub-hosted runners
+- A reverse proxy sending the production domain to `127.0.0.1:3001`
+- HTTPS configured at the reverse proxy
+
+The workflow runs only one container because the current JSON database does not support concurrent application writers. Its persistent Docker volume is named `fieldtrack-pro-data`.
+
+### Repository secrets
+
+Configure these under **GitHub repository → Settings → Secrets and variables → Actions → Secrets**:
+
+| Secret | Description |
+| --- | --- |
+| `DEPLOY_HOST` | Server hostname or IP address |
+| `DEPLOY_PORT` | SSH port; normally `22` |
+| `DEPLOY_USER` | SSH deployment username |
+| `DEPLOY_SSH_KEY` | Private SSH key for the deployment user |
+| `GHCR_USERNAME` | GitHub username that can read the container package |
+| `GHCR_TOKEN` | GitHub token with `read:packages` permission |
+
+### Repository variables
+
+Configure these under **Actions → Variables**:
+
+| Variable | Description | Example |
+| --- | --- | --- |
+| `APP_URL` | Public HTTPS URL used for the final health check | `https://fieldtrack.example.com` |
+| `APP_PORT` | Private host port used by the reverse proxy | `3001` |
+
+Create a GitHub environment named `production`. Add required reviewers to that environment if deployments need manual approval.
+
+The workflow can also be started manually from **GitHub → Actions → Validate, Build, and Deploy → Run workflow**.
