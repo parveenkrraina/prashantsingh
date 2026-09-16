@@ -147,6 +147,7 @@ Configure these under **GitHub repository → Settings → Secrets and variables
 | `DEPLOY_PORT` | SSH port; normally `22` |
 | `DEPLOY_USER` | SSH deployment username |
 | `DEPLOY_SSH_KEY` | Private SSH key for the deployment user |
+| `DEPLOY_KNOWN_HOSTS` | Trusted server host-key entry generated with `ssh-keyscan -H your-server` and verified by the server administrator |
 | `GHCR_USERNAME` | GitHub username that can read the container package |
 | `GHCR_TOKEN` | GitHub token with `read:packages` permission |
 
