@@ -99,6 +99,29 @@ jobs:
       name: production
       url: ${{ vars.APP_URL }}
     steps:
+      - name: Verify required secrets are present
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        shell: bash
+        run: |
+          missing=()
+          [ -z "$DEPLOY_SSH_KEY" ]     && missing+=(DEPLOY_SSH_KEY)
+          [ -z "$DEPLOY_KNOWN_HOSTS" ] && missing+=(DEPLOY_KNOWN_HOSTS)
+          [ -z "$DEPLOY_HOST" ]        && missing+=(DEPLOY_HOST)
+          [ -z "$DEPLOY_USER" ]        && missing+=(DEPLOY_USER)
+          [ -z "$GHCR_USERNAME" ]      && missing+=(GHCR_USERNAME)
+          [ -z "$GHCR_TOKEN" ]         && missing+=(GHCR_TOKEN)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::The following required secrets are not set: ${missing[*]}"
+            echo "::error::Configure these secrets in the repository or environment settings before running this workflow."
+            exit 1
+          fi
+
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
